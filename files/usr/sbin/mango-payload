@@ -1,0 +1,102 @@
+#!/bin/sh
+# mango-payload - monta o pendrive MANGO como /tmp/opt e garante os serviços.
+#
+# Layout esperado do pendrive (ext4, LABEL=MANGO):
+#   /opt/bin/tailscaled          binário (e symlink tailscale)
+#   /keys/authorized_keys        sua chave pública SSH
+#   /backup/*.bin                firmware original (material de recuperação)
+#   /MANIFEST.txt                hashes
+#
+# Se o pendrive não estiver presente, o script tenta o fallback definido em
+# /etc/mango/repo.conf (REPO=, REF=, PROXY=). Sem pendrive e sem fallback,
+# o roteador continua acessível pela LAN — apenas sem VPN.
+
+LABEL=MANGO
+MNT=/mnt/mango
+OPT=/tmp/opt
+CONF=/etc/mango/repo.conf
+
+log() { logger -t mango-payload "$*"; echo "[mango-payload] $*"; }
+
+mounted() { grep -q " $MNT " /proc/mounts 2>/dev/null; }
+
+wait_device() {
+	i=0
+	while [ $i -lt 20 ]; do
+		[ -b /dev/sda1 ] && return 0
+		i=$((i + 1))
+		sleep 1
+	done
+	return 1
+}
+
+try_mount() {
+	wait_device || return 1
+	mkdir -p "$MNT"
+
+	# 1) por label (funciona mesmo se o pendrive virar /dev/sdb)
+	mount -t ext4 -o ro,noatime "LABEL=$LABEL" "$MNT" 2>/dev/null && return 0
+	# 2) por dispositivo
+	mount -t ext4 -o ro,noatime /dev/sda1 "$MNT" 2>/dev/null && return 0
+	# 3) journal sujo / remoção sem unmount: recupera e tenta de novo
+	e2fsck -p /dev/sda1 >/dev/null 2>&1
+	mount -t ext4 -o ro,noatime /dev/sda1 "$MNT" 2>/dev/null && return 0
+
+	return 1
+}
+
+install_keys() {
+	[ -s "$MNT/keys/authorized_keys" ] || return 0
+
+	mkdir -p /etc/dropbear /root/.ssh
+	chmod 700 /etc/dropbear /root/.ssh
+	cp "$MNT/keys/authorized_keys" /etc/dropbear/authorized_keys
+	cp "$MNT/keys/authorized_keys" /root/.ssh/authorized_keys
+	chmod 600 /etc/dropbear/authorized_keys /root/.ssh/authorized_keys
+
+	if grep -q '^root::' /etc/shadow 2>/dev/null; then
+		log "ATENÇÃO: root sem senha - mantendo autenticação por senha ativa"
+		return 0
+	fi
+
+	# Só grava na flash se realmente mudou (evita desgaste a cada boot)
+	if [ "$(uci -q get dropbear.@dropbear[0].PasswordAuth)" != "off" ]; then
+		uci -q set dropbear.@dropbear[0].PasswordAuth='off'
+		uci -q set dropbear.@dropbear[0].RootPasswordAuth='off'
+		uci -q commit dropbear
+		log "chave SSH do pendrive instalada; senha desligada"
+	fi
+}
+
+# ---------------------------------------------------------------- main ------
+ok=0
+
+if mounted; then
+	ok=1
+elif try_mount; then
+	ok=1
+	log "pendrive montado em $MNT (read-only)"
+else
+	log "pendrive ausente ou ilegível"
+fi
+
+if [ "$ok" = "1" ] && [ -x "$MNT/opt/bin/tailscaled" ]; then
+	rm -rf "$OPT"
+	ln -s "$MNT/opt" "$OPT"
+	log "payload local: $OPT -> $MNT/opt"
+	install_keys
+elif [ -f "$CONF" ]; then
+	log "usando fallback de download ($CONF)"
+	# shellcheck disable=SC1090
+	. "$CONF"
+	REPO="$REPO" REF="$REF" PROXY="$PROXY" /usr/sbin/mt300n-install \
+		|| log "fallback de download falhou"
+else
+	log "ERRO: sem pendrive e sem fallback - VPN indisponível (LAN continua ativa)"
+fi
+
+if [ -x /tmp/opt/bin/tailscaled ]; then
+	/etc/init.d/tailscaled restart >/dev/null 2>&1
+fi
+
+exit 0

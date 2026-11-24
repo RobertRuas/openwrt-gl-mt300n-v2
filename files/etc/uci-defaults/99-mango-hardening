@@ -1,0 +1,94 @@
+#!/bin/sh
+# 99-mango-hardening - defaults seguros, aplicados uma vez no primeiro boot.
+#
+# Roda DEPOIS de 99-gl-mt300n-v2 (ordem alfabética: 'g' < 'm'), que é quem
+# reabilita tailcat/frpc/mt300n-payload. Por isso este arquivo desfaz tudo.
+
+log() { logger -t mango-hardening "$*"; }
+
+# ---------------------------------------------------------------- LAN -------
+# 192.168.7.1 evita o conflito clássico com o roteador da operadora
+# (quase todos usam 192.168.1.1 - que é o default deste firmware).
+if uci -q get network.lan >/dev/null 2>&1; then
+	uci -q set network.lan.ipaddr='192.168.7.1'
+	uci -q set network.lan.netmask='255.255.255.0'
+	uci -q commit network
+	log "LAN definida em 192.168.7.1"
+fi
+
+# ---------------------------------------------------------------- Wi-Fi -----
+# Ninguém usa o rádio deste device: ele é um ponto de saída VPN e fica atrás
+# do roteador da casa. Desligar remove superfície de ataque e interferência.
+if uci -q get wireless.@wifi-device[0] >/dev/null 2>&1; then
+	uci -q set wireless.@wifi-device[0].disabled='1'
+	uci -q commit wireless
+	log "Wi-Fi desligado"
+fi
+
+# ---------------------------------------------------------------- LuCI ------
+uci -q set uhttpd.main.redirect_https='1'
+uci -q commit uhttpd
+
+# ------------------------------------------- serviços do payload antigo -----
+for s in tailcat frpc mt300n-payload; do
+	if [ -x "/etc/init.d/$s" ]; then
+		/etc/init.d/"$s" stop  >/dev/null 2>&1
+		/etc/init.d/"$s" disable >/dev/null 2>&1
+	fi
+done
+uci -q set tailcat.main.enabled='0'
+uci -q set frpc.main.enabled='0'
+uci -q commit tailcat 2>/dev/null
+uci -q commit frpc 2>/dev/null
+log "tailcat/frpc/downloader desabilitados"
+
+# ------------------------------------------------------- novos serviços -----
+/etc/init.d/mango-payload enable 2>/dev/null
+/etc/init.d/tailscaled   enable 2>/dev/null
+
+# ---------------------------------------------------------------- SSH -------
+# Senha só continua ativa enquanto NÃO houver chave E senha root definida.
+if [ -s /etc/dropbear/authorized_keys ] && ! grep -q '^root::' /etc/shadow; then
+	uci -q set dropbear.@dropbear[0].PasswordAuth='off'
+	uci -q set dropbear.@dropbear[0].RootPasswordAuth='off'
+	uci -q commit dropbear
+	log "SSH: somente chave"
+else
+	uci -q set dropbear.@dropbear[0].PasswordAuth='on'
+	uci -q set dropbear.@dropbear[0].RootPasswordAuth='on'
+	uci -q commit dropbear
+	log "ATENÇÃO: sem chave instalada - defina 'passwd root' e espere a chave do pendrive"
+fi
+
+# ----------------------------------------------- firewall: exit node -------
+# Zona própria para tailscale0, com masquerade: é isso que faz o tráfego do
+# iPhone sair com o IP da casa.
+uci -q delete firewall.tailscale
+uci set firewall.tailscale=zone
+uci set firewall.tailscale.name='tailscale'
+uci set firewall.tailscale.input='ACCEPT'
+uci set firewall.tailscale.output='ACCEPT'
+uci set firewall.tailscale.forward='ACCEPT'
+uci set firewall.tailscale.masq='1'
+uci set firewall.tailscale.mtu_fix='1'
+uci add_list firewall.tailscale.device='tailscale0'
+
+uci -q delete firewall.ts_wan
+uci set firewall.ts_wan=forwarding
+uci set firewall.ts_wan.src='tailscale'
+uci set firewall.ts_wan.dest='wan'
+
+uci -q delete firewall.lan_ts
+uci set firewall.lan_ts=forwarding
+uci set firewall.lan_ts.src='lan'
+uci set firewall.lan_ts.dest='tailscale'
+
+uci -q commit firewall
+log "firewall: zona tailscale + NAT"
+
+# ---------------------------------------------------------------- sysctl ----
+sysctl -w net.ipv4.ip_forward=1 >/dev/null 2>&1
+sysctl -w net.ipv6.conf.all.forwarding=1 >/dev/null 2>&1
+
+log "hardening aplicado"
+exit 0

@@ -1,0 +1,21 @@
+#!/bin/sh /etc/rc.common
+# mango-payload - monta o pendrive MANGO e publica /tmp/opt.
+#
+# Substitui o mt300n-payload original (que baixava 10-12 MB do GitHub a cada
+# boot e executava install.sh como root). Aqui o payload vem de um pendrive
+# local, montado READ-ONLY. O download existe apenas como fallback manual,
+# habilitado por /etc/mango/repo.conf.
+#
+# Roda de forma síncrona no boot (sem procd) porque é curto e determinístico:
+# no pior caso espera 20 s pelo dispositivo USB.
+
+START=96
+STOP=05
+
+start() {
+	/usr/sbin/mango-payload
+}
+
+stop() {
+	:
+}

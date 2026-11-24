@@ -1,0 +1,3 @@
+# Mango VPN - crontab do root
+# Vigia o túnel a cada 5 minutos (ver /usr/bin/mango-watchdog).
+*/5 * * * * /usr/bin/mango-watchdog

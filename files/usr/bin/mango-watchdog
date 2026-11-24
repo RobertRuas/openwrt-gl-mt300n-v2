@@ -1,0 +1,107 @@
+#!/bin/sh
+# mango-watchdog - mantém o túnel vivo. Executado a cada 5 min pelo cron.
+#
+# Política:
+#   - sem internet no WAN  -> não faz nada (não é culpa nossa)
+#   - tailscaled parado    -> reinicia o serviço
+#   - backend travado      -> reinicia o serviço
+#   - 3 falhas seguidas    -> reinicia o roteador
+#   - 3 reinícios em 1 h   -> pausa o watchdog por 2 h (evita loop)
+#   - NeedsLogin/Stopped   -> não reinicia (precisa de ação humana)
+
+STATE=/var/run/mango
+PAUSE="$STATE/pause"
+FAIL="$STATE/fail"
+REBOOTS="$STATE/reboots"
+SOCK=/var/run/tailscale/tailscaled.sock
+TS=/tmp/opt/bin/tailscale
+
+mkdir -p "$STATE"
+
+log() { logger -t mango-watchdog "$*"; }
+
+[ -f "$PAUSE" ] && exit 0
+
+wan_up() {
+	ip route 2>/dev/null | grep -q '^default' || return 1
+	ping -c1 -W2 1.1.1.1 >/dev/null 2>&1 && return 0
+	ping -c1 -W2 8.8.8.8 >/dev/null 2>&1 && return 0
+	return 1
+}
+
+ts_running() { pgrep -f '/tmp/opt/bin/tailscaled' >/dev/null 2>&1; }
+
+ts_state() {
+	# caminho absoluto: o cron não herda o PATH do profile.d
+	[ -x "$TS" ] || return 1
+	"$TS" --socket="$SOCK" status --json 2>/dev/null \
+		| sed -n 's/.*"BackendState":"\([A-Za-z]*\)".*/\1/p' \
+		| head -1
+}
+
+# ---------------------------------------------------------------- WAN -------
+if ! wan_up; then
+	log "WAN sem internet - aguardando"
+	exit 0
+fi
+
+# ------------------------------------------------- pendrive / binário -------
+if [ ! -x /tmp/opt/bin/tailscaled ]; then
+	log "binário ausente - tentando remontar o pendrive"
+	/usr/sbin/mango-payload >/dev/null 2>&1
+fi
+
+# ---------------------------------------------------------------- túnel -----
+ok=0
+if ts_running; then
+	st=$(ts_state)
+	case "$st" in
+		Running)
+			ok=1
+			;;
+		NeedsLogin|Stopped)
+			# Exige ação humana (login no painel). Reiniciar não resolve
+			# e só geraria loop de logs.
+			log "backend em estado '$st' - requer login manual"
+			ok=1
+			;;
+		*)
+			log "backend em estado '${st:-desconhecido}' - reiniciando serviço"
+			;;
+	esac
+else
+	log "tailscaled não está rodando - iniciando serviço"
+fi
+
+if [ "$ok" = "1" ]; then
+	echo 0 > "$FAIL"
+	exit 0
+fi
+
+/etc/init.d/tailscaled restart >/dev/null 2>&1
+n=$(cat "$FAIL" 2>/dev/null || echo 0)
+n=$((n + 1))
+echo "$n" > "$FAIL"
+log "tentativa de recuperação $n/3"
+
+if [ "$n" -lt 3 ]; then
+	exit 0
+fi
+
+# ------------------------------------------------- proteção anti-loop ------
+now=$(date +%s)
+recent=$(awk -v now="$now" '$1 > now - 3600' "$REBOOTS" 2>/dev/null | wc -l)
+
+if [ "$recent" -ge 3 ]; then
+	log "3 reinícios em 1 h - pausando o watchdog por 2 h"
+	touch "$PAUSE"
+	( sleep 7200; rm -f "$PAUSE" ) >/dev/null 2>&1 &
+	exit 0
+fi
+
+echo "$now" >> "$REBOOTS"
+echo 0 > "$FAIL"
+log "reiniciando o roteador como última tentativa"
+sync
+reboot
+exit 0

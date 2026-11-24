@@ -1,0 +1,17 @@
+# /etc/config/tailscale - parâmetros do serviço tailscaled
+#
+# O login e o "advertise exit node" NÃO ficam aqui: são feitos uma única vez
+# com `tailscale up ...` e ficam gravados no estado (/etc/tailscale), que
+# sobrevive a reboot. Este arquivo só controla o serviço.
+
+config tailscale 'main'
+	# Habilita o daemon no boot.
+	option enabled '1'
+
+	# Servidor de controle (vazio = padrão da Tailscale).
+	option login_server ''
+
+	# Documentação de intenção (usado pelo mt300n-ctl/status e pelos testes):
+	# o device foi anunciado como exit node e a LAN como subnet router.
+	option exit_node '1'
+	option routes ''

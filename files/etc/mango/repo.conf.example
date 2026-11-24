@@ -1,0 +1,14 @@
+# Fallback de download (opcional)
+#
+# Copie este arquivo para /etc/mango/repo.conf SOMENTE se quiser permitir que o
+# roteador baixe o payload quando o pendrive estiver ausente ou ilegível.
+#
+# Use SEMPRE o seu fork e uma TAG imutável (nunca main de terceiro).
+# O hash do arquivo é verificado pelo install.sh do repositório; para verificação
+# independente, gere a imagem com o hash fixado (ver 03-scripts/verificar-imagem.sh).
+#
+# Para desabilitar o fallback: não crie o arquivo.
+
+REPO="SEU_USUARIO/openwrt-gl-mt300n-v2"
+REF="v25.12.5-SEUBUILD"
+PROXY=""
