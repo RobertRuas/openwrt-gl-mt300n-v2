@@ -337,15 +337,15 @@ jobs:
         run: |
           set -eux
           BASE="https://downloads.openwrt.org/releases/${OPENWRT_VERSION}/targets/${TARGET}/${SUBTARGET}"
-          IB="openwrt-imagebuilder-${OPENWRT_VERSION}-${TARGET}-${SUBTARGET}.Linux-x86_64.tar.zst"
+          IB="openwrt-imagebuilder-${OPENWRT_VERSION}-${TARGET}-${SUBTARGET}.Linux-x86_64.tar.xz"
           curl -fsSL -o "$IB" "$BASE/$IB"
           curl -fsSL -o sha256sums "$BASE/sha256sums"
           # OpenWrt's sha256sums uses the binary-mode marker: "<hash> *<file>"
           grep -F "*${IB}" sha256sums | sha256sum -c -
-          tar --zstd -xf "$IB"
+          tar -xf "$IB"
           # The top-level directory carries a .Linux-x86_64 suffix; derive it
           # from the archive instead of guessing.
-          IBDIR="$PWD/$(tar --zstd -tf "$IB" | head -1 | cut -d/ -f1)"
+          IBDIR="$PWD/$(tar -tf "$IB" | head -1 | cut -d/ -f1)"
           [ -d "$IBDIR" ] || { echo "ERROR: ImageBuilder dir not found at $IBDIR"; ls -1; exit 1; }
           echo "IBDIR=$IBDIR" >> "$GITHUB_ENV"
           echo "ImageBuilder ready: $IBDIR"
