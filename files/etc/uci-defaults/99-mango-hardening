@@ -45,6 +45,11 @@ log "tailcat/frpc/downloader desabilitados"
 # ------------------------------------------------------- novos serviços -----
 /etc/init.d/mango-payload enable 2>/dev/null
 /etc/init.d/tailscaled   enable 2>/dev/null
+/etc/init.d/cron         enable 2>/dev/null
+
+# O git não preserva o modo 0600; o crond exige crontab não acessível a outros.
+[ -f /etc/crontabs/root ] && chmod 600 /etc/crontabs/root
+/etc/init.d/cron restart >/dev/null 2>&1
 
 # ---------------------------------------------------------------- SSH -------
 # Senha só continua ativa enquanto NÃO houver chave E senha root definida.
