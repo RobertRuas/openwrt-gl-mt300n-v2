@@ -47,9 +47,11 @@ log "tailcat/frpc/downloader desabilitados"
 /etc/init.d/tailscaled   enable 2>/dev/null
 /etc/init.d/cron         enable 2>/dev/null
 
-# O git não preserva o modo 0600; o crond exige crontab não acessível a outros.
-[ -f /etc/crontabs/root ] && chmod 600 /etc/crontabs/root
-/etc/init.d/cron restart >/dev/null 2>&1
+# Crontab gerado aqui (e não herdado do git) para garantir newline final e
+# permissões corretas: o git não preserva 0600, e um crontab malformado
+# desativaria o watchdog silenciosamente.
+printf '%s\n' '*/5 * * * * /usr/bin/mango-watchdog' > /etc/crontabs/root
+chmod 600 /etc/crontabs/root
 
 # ---------------------------------------------------------------- SSH -------
 # Senha só continua ativa enquanto NÃO houver chave E senha root definida.
